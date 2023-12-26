@@ -16,9 +16,9 @@ Q_NETWORK_ITERATION = 100
 
 env = gym.make("CartPole-v0")
 env = env.unwrapped
-NUM_ACTIONS = env.action_space.n
-NUM_STATES = env.observation_space.shape[0]
-ENV_A_SHAPE = 0 if isinstance(env.action_space.sample(), int) else env.action_space.sample.shape
+NUM_ACTIONS = env.action_space.n # 2
+NUM_STATES = env.observation_space.shape[0] # 4
+ENV_A_SHAPE = 0 if isinstance(env.action_space.sample(), int) else env.action_space.sample.shape # 0，用来检查动作空间是否是离散的，离散则为0，连续则设置为样本的形状
 
 class Net(nn.Module):
     """docstring for Net"""
@@ -37,7 +37,7 @@ class Net(nn.Module):
         x = self.fc2(x)
         x = F.relu(x)
         action_prob = self.out(x)
-        return action_prob
+        return action_prob # 输出动作概率
 
 class DQN():
     """docstring for DQN"""
@@ -58,7 +58,7 @@ class DQN():
         state = torch.unsqueeze(torch.FloatTensor(state), 0) # get a 1D array
         if np.random.randn() <= EPISILO:# greedy policy
             action_value = self.eval_net.forward(state)
-            action = torch.max(action_value, 1)[1].data.numpy()
+            action = torch.max(action_value, 1)[1].data.numpy() # max返回(最大值，下标)
             action = action[0] if ENV_A_SHAPE == 0 else action.reshape(ENV_A_SHAPE)
         else: # random policy
             action = np.random.randint(0,NUM_ACTIONS)
@@ -77,32 +77,34 @@ class DQN():
 
         #update the parameters
         if self.learn_step_counter % Q_NETWORK_ITERATION ==0:
-            self.target_net.load_state_dict(self.eval_net.state_dict())
+            self.target_net.load_state_dict(self.eval_net.state_dict()) # 一定步数更新目标网络
         self.learn_step_counter+=1
 
         #sample batch from memory
-        sample_index = np.random.choice(MEMORY_CAPACITY, BATCH_SIZE)
+        sample_index = np.random.choice(MEMORY_CAPACITY, BATCH_SIZE) # 2000范围内随机取样128个
+        # memory里存了很多种state下采取某个action获得reward以及下一个state
         batch_memory = self.memory[sample_index, :]
+        # np.hstack((state, [action, reward], next_state))
         batch_state = torch.FloatTensor(batch_memory[:, :NUM_STATES])
         batch_action = torch.LongTensor(batch_memory[:, NUM_STATES:NUM_STATES+1].astype(int))
-        batch_reward = torch.FloatTensor(batch_memory[:, NUM_STATES+1:NUM_STATES+2])
+        batch_reward = torch.FloatTensor(batch_memory[:, NUM_STATES+1:NUM_STATES+2]) # 每一步采取某个action后的reward是固定的
         batch_next_state = torch.FloatTensor(batch_memory[:,-NUM_STATES:])
 
         #q_eval
-        q_eval = self.eval_net(batch_state).gather(1, batch_action)
-        q_next = self.target_net(batch_next_state).detach()
-        q_target = batch_reward + GAMMA * q_next.max(1)[0].view(BATCH_SIZE, 1)
-        loss = self.loss_func(q_eval, q_target)
+        q_eval = self.eval_net(batch_state).gather(1, batch_action) # 收集采取每一次的动作概率，即每个动作对应的q值
+        q_next = self.target_net(batch_next_state).detach() # 取得下一个状态下采取每个动作的qvalue
+        q_target = batch_reward + GAMMA * q_next.max(1)[0].view(BATCH_SIZE, 1) # 目标q值：每个样本的即时奖励与对未来最大 Q 值的折扣预期得结合。（目标 Q 值是根据贝尔曼方程（Bellman Equation）计算的，表示在当前状态下采取某个动作后，未来能够获得的累计折扣奖励的期望值。）
+        loss = self.loss_func(q_eval, q_target) # 目标是去学习一个完善的qvalue函数，以更准确地估计状态-动作对的价值，从而实现策略的优化。
 
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
 
-def reward_func(env, x, x_dot, theta, theta_dot):
-    r1 = (env.x_threshold - abs(x))/env.x_threshold - 0.5
-    r2 = (env.theta_threshold_radians - abs(theta)) / env.theta_threshold_radians - 0.5
-    reward = r1 + r2
-    return reward
+def reward_func(env, x, x_dot, theta, theta_dot): # 小车位置，小车速度，杆子角度，杆子角速度
+    r1 = (env.x_threshold - abs(x))/env.x_threshold - 0.5 # thres默认2.4，x在正负2.4范围内，这里是为了让小车位置尽量在正负1.2之间？
+    r2 = (env.theta_threshold_radians - abs(theta)) / env.theta_threshold_radians - 0.5 # theta_threshold_radians默认是12度，弧度下约0.209
+    reward = r1 + r2 # 小车越中心，r1越大，可接受的偏离角度越大即r2范围可更大，越边上杆子要求越竖直
+    return reward # 小车越中心，杆子越竖直，奖励越大，[0, 1]
 
 def main():
     dqn = DQN()
@@ -118,7 +120,7 @@ def main():
             env.render()
             action = dqn.choose_action(state)
             next_state, _ , done, info = env.step(action)
-            x, x_dot, theta, theta_dot = next_state
+            x, x_dot, theta, theta_dot = next_state # 小车位置，小车速度，杆子角度，杆子角速度
             reward = reward_func(env, x, x_dot, theta, theta_dot)
 
             dqn.store_transition(state, action, reward, next_state)
